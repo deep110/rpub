@@ -1,0 +1,11 @@
+[package]
+name = "rpub"
+version = "0.1.0"
+edition = "2021"
+
+
+[dependencies]
+argh = "0.1.12"
+termion = "4.0.2"
+roxmltree = "^0.14"
+unicode-width = "0.1.13"
