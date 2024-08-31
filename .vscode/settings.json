@@ -1,4 +1,19 @@
 {
     "cSpell.words": [
-    ]
+        "argh",
+        "epub",
+        "rootfile"
+    ],
+    "editor.semanticTokenColorCustomizations": {
+        "enabled": true,
+        "rules": {
+            "*.mutable": {
+                "underline": false,
+            }
+        }
+    },
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer",
+        "editor.formatOnSave": true
+    }
 }
