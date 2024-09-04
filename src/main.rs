@@ -51,8 +51,8 @@ fn main() -> Result<()> {
         exit(1);
     }
     let ebook = epub::Epub::new(path.unwrap()?)?;
-    println!("{:?}", ebook.file_path);
-    println!("{:?}", ebook.metadata);
+    // println!("{:?}", ebook.chapters);
+    println!("TOC: {:?}", ebook.toc);
 
     Ok(())
 }
