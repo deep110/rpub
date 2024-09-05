@@ -50,9 +50,10 @@ fn main() -> Result<()> {
         println!("No ebook provided or in history");
         exit(1);
     }
-    let ebook = epub::Epub::new(path.unwrap()?)?;
+    let mut ebook = epub::Epub::new(path.unwrap()?)?;
     // println!("{:?}", ebook.chapters);
-    println!("TOC: {:?}", ebook.toc);
+    // println!("TOC: {:?}", ebook.toc);
+    ebook.read_chapter(3)?;
 
     Ok(())
 }

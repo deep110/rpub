@@ -1,4 +1,4 @@
-use roxmltree::{Document, Node};
+use roxmltree::{Document, Node, ParsingOptions};
 use std::{
     collections::HashMap,
     fs::File,
@@ -41,7 +41,6 @@ pub struct Metadata {
 pub struct Chapter {
     pub title: String,
     pub id: String,
-    // pub toc_title: String,
     pub relative_path: String,
     pub text: Option<String>,
     // pub lines: Vec<(usize, usize)>,
@@ -214,7 +213,8 @@ impl Epub {
         nav: &mut HashMap<String, (String, String)>,
     ) -> Result<()> {
         let xml = self.get_raw_text(&toc_path)?;
-        let doc = Document::parse(&xml)?;
+        let opt = ParsingOptions { allow_dtd: true, nodes_limit: u32::MAX };
+        let doc = Document::parse_with_options(&xml, opt)?;
 
         if version == "3.0" {
             if let Some(ol) = doc
@@ -254,41 +254,33 @@ impl Epub {
         Ok(())
     }
 
-    // fn get_chapters(&mut self, spine: Vec<(String, String)>) {
-    //     for (title, path) in spine {
-    //         // https://github.com/RazrFalcon/roxmltree/issues/12
-    //         // UnknownEntityReference for HTML entities
-    //         let xml = self.get_text(&format!("{}{}", self.rootdir, path));
-    //         let opt = ParsingOptions { allow_dtd: true };
-    //         let doc = Document::parse_with_options(&xml, opt).unwrap();
-    //         let body = doc.root_element().last_element_child().unwrap();
-    //         let state = Attributes::default();
-    //         let mut c = Chapter {
-    //             title,
-    //             text: String::new(),
-    //             lines: Vec::new(),
-    //             attrs: vec![(0, Attribute::Reset, state)],
-    //             state,
-    //             links: Vec::new(),
-    //             frag: Vec::new(),
-    //         };
-    //         render(body, &mut c);
-    //         if c.text.trim().is_empty() {
-    //             continue;
-    //         }
-    //         let relative = path.rsplit('/').next().unwrap();
-    //         self.links
-    //             .insert(relative.to_string(), (self.chapters.len(), 0));
-    //         for (id, pos) in c.frag.drain(..) {
-    //             let url = format!("{}#{}", relative, id);
-    //             self.links.insert(url, (self.chapters.len(), pos));
-    //         }
-    //         for link in c.links.iter_mut() {
-    //             if link.2.starts_with('#') {
-    //                 link.2.insert_str(0, relative);
-    //             }
-    //         }
-    //         self.chapters.push(c);
-    //     }
-    // }
+    pub fn read_chapter(&mut self, index: usize) -> Result<()>{
+        let mut chapter = &self.chapters[index];
+        // https://github.com/RazrFalcon/roxmltree/issues/12
+        // UnknownEntityReference for HTML entities
+        let xml = self.get_raw_text(&format!("{}{}", self.root_dir, chapter.relative_path))?;
+        let opt = ParsingOptions { allow_dtd: true, nodes_limit: u32::MAX };
+        let doc = Document::parse_with_options(&xml, opt)?;
+        let body = doc.root_element().last_element_child().unwrap();
+
+        println!("{:?}", doc.root_element());
+
+        // render(body, &mut c);
+        // if chapter.text.trim().is_empty() {
+        //     return Ok(());
+        // }
+        // let relative = path.rsplit('/').next().unwrap();
+        // self.links
+        //     .insert(relative.to_string(), (self.chapters.len(), 0));
+        // for (id, pos) in c.frag.drain(..) {
+        //     let url = format!("{}#{}", relative, id);
+        //     self.links.insert(url, (self.chapters.len(), pos));
+        // }
+        // for link in c.links.iter_mut() {
+        //     if link.2.starts_with('#') {
+        //         link.2.insert_str(0, relative);
+        //     }
+        // }
+        Ok(())
+    }
 }
