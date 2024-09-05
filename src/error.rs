@@ -1,6 +1,7 @@
 //! The `errors` module defines the common error types.
 
 use core::fmt;
+use super::xml;
 
 /// `Error` provides an enumeration of all possible errors reported by Cauldron.
 #[derive(Debug)]
@@ -33,8 +34,8 @@ impl std::error::Error for Error {
     }
 }
 
-impl From<roxmltree::Error> for Error {
-    fn from(err: roxmltree::Error) -> Self {
+impl From<xml::Error> for Error {
+    fn from(err: xml::Error) -> Self {
         Error::ParseError(format!("Invalid Epub Format: {}", err.to_string()))
     }
 }

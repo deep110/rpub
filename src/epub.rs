@@ -1,21 +1,16 @@
-use roxmltree::{Document, Node, ParsingOptions};
+use super::xml::{Document, Node, ParsingOptions};
 use std::{
     collections::HashMap,
     fs::File,
     io::Read,
     path::{self, PathBuf},
-    sync::OnceLock,
 };
 use zip::ZipArchive;
 
 use super::Result;
 use crate::error::{to_fnf_error, to_parse_error};
 
-static MIME_TYPE: OnceLock<String> = OnceLock::new();
-
-fn epub_mimetype() -> &'static String {
-    MIME_TYPE.get_or_init(|| String::from("application/epub+zip"))
-}
+pub const EPUB_MIME_TYPE: &str = "application/epub+zip";
 
 pub struct Epub {
     container: ZipArchive<File>,
@@ -114,7 +109,7 @@ impl Epub {
             metadata: None,
         };
         // check mimetype
-        if epub.get_raw_text("mimetype")? != *epub_mimetype() {
+        if epub.get_raw_text("mimetype")? != EPUB_MIME_TYPE {
             return Err(to_parse_error());
         }
 
@@ -213,7 +208,10 @@ impl Epub {
         nav: &mut HashMap<String, (String, String)>,
     ) -> Result<()> {
         let xml = self.get_raw_text(&toc_path)?;
-        let opt = ParsingOptions { allow_dtd: true, nodes_limit: u32::MAX };
+        let opt = ParsingOptions {
+            allow_dtd: true,
+            nodes_limit: u32::MAX,
+        };
         let doc = Document::parse_with_options(&xml, opt)?;
 
         if version == "3.0" {
@@ -254,12 +252,13 @@ impl Epub {
         Ok(())
     }
 
-    pub fn read_chapter(&mut self, index: usize) -> Result<()>{
+    pub fn read_chapter(&mut self, index: usize) -> Result<()> {
         let mut chapter = &self.chapters[index];
-        // https://github.com/RazrFalcon/roxmltree/issues/12
-        // UnknownEntityReference for HTML entities
         let xml = self.get_raw_text(&format!("{}{}", self.root_dir, chapter.relative_path))?;
-        let opt = ParsingOptions { allow_dtd: true, nodes_limit: u32::MAX };
+        let opt = ParsingOptions {
+            allow_dtd: true,
+            nodes_limit: u32::MAX,
+        };
         let doc = Document::parse_with_options(&xml, opt)?;
         let body = doc.root_element().last_element_child().unwrap();
 
@@ -284,3 +283,68 @@ impl Epub {
         Ok(())
     }
 }
+
+// fn render(n: Node, c: &mut Chapter) {
+//     if n.is_text() {
+//         let text = n.text().unwrap();
+//         let content: Vec<_> = text.split_ascii_whitespace().collect();
+
+//         if text.starts_with(char::is_whitespace) {
+//             c.text.push(' ');
+//         }
+//         c.text.push_str(&content.join(" "));
+//         if text.ends_with(char::is_whitespace) {
+//             c.text.push(' ');
+//         }
+//         return;
+//     }
+
+//     if let Some(id) = n.attribute("id") {
+//         c.frag.push((id.to_string(), c.text.len()));
+//     }
+
+//     match n.tag_name().name() {
+//         "br" => c.text.push('\n'),
+//         "hr" => c.text.push_str("\n* * *\n"),
+//         "img" => c.text.push_str("\n[IMG]\n"),
+//         "a" => {
+//             match n.attribute("href") {
+//                 // TODO open external urls in browser
+//                 Some(url) if !url.starts_with("http") => {
+//                     let start = c.text.len();
+//                     c.render(n, Attribute::Underlined, Attribute::NoUnderline);
+//                     c.links.push((start, c.text.len(), url.to_string()));
+//                 }
+//                 _ => c.render_text(n),
+//             }
+//         }
+//         "em" => c.render(n, Attribute::Italic, Attribute::NoItalic),
+//         "strong" => c.render(n, Attribute::Bold, Attribute::NormalIntensity),
+//         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+//             c.text.push('\n');
+//             c.render(n, Attribute::Bold, Attribute::NormalIntensity);
+//             c.text.push('\n');
+//         }
+//         "blockquote" | "div" | "p" | "tr" => {
+//             // TODO compress newlines
+//             c.text.push('\n');
+//             c.render_text(n);
+//             c.text.push('\n');
+//         }
+//         "li" => {
+//             c.text.push_str("\n- ");
+//             c.render_text(n);
+//             c.text.push('\n');
+//         }
+//         "pre" => {
+//             c.text.push_str("\n  ");
+//             n
+//                 .descendants()
+//                 .filter(Node::is_text)
+//                 .map(|n| n.text().unwrap().replace('\n', "\n  "))
+//                 .for_each(|s| c.text.push_str(&s));
+//             c.text.push('\n');
+//         }
+//         _ => c.render_text(n),
+//     }
+// }

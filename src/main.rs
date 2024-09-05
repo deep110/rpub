@@ -1,4 +1,5 @@
 mod error;
+mod xml;
 mod epub;
 
 use std::{fs, path, process::exit};
@@ -52,7 +53,7 @@ fn main() -> Result<()> {
     }
     let mut ebook = epub::Epub::new(path.unwrap()?)?;
     // println!("{:?}", ebook.chapters);
-    // println!("TOC: {:?}", ebook.toc);
+    println!("TOC: {:?}", ebook.toc);
     ebook.read_chapter(3)?;
 
     Ok(())
