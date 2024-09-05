@@ -1,4 +1,3 @@
-
 use core::ops::Range;
 use core::str;
 
@@ -148,20 +147,18 @@ impl<'input> StrSpan<'input> {
 }
 
 pub enum Token<'input> {
-    // <?target content?>
-    ProcessingInstruction(&'input str, Option<&'input str>, Range<usize>),
-
-    // <!-- text -->
-    Comment(&'input str, Range<usize>),
-
-    // <!ENTITY ns_extend "http://test.com">
-    EntityDeclaration(&'input str, StrSpan<'input>),
-
     // <ns:elem
     ElementStart(&'input str, &'input str, usize),
 
     // ns:attr="value"
-    Attribute(Range<usize>, u16, u8, &'input str, &'input str, StrSpan<'input>),
+    Attribute(
+        Range<usize>,
+        u16,
+        u8,
+        &'input str,
+        &'input str,
+        StrSpan<'input>,
+    ),
 
     ElementEnd(ElementEnd<'input>, Range<usize>),
 
@@ -169,9 +166,6 @@ pub enum Token<'input> {
     // Basically everything between `>` and `<`.
     // Except `]]>`, which is not allowed and will lead to an error.
     Text(&'input str, Range<usize>),
-
-    // <![CDATA[text]]>
-    Cdata(&'input str, Range<usize>),
 }
 
 /// `ElementEnd` token.
@@ -190,11 +184,7 @@ pub trait XmlEvents<'input> {
 }
 
 // document ::= prolog element Misc*
-pub fn parse<'input>(
-    text: &'input str,
-    allow_dtd: bool,
-    events: &mut dyn XmlEvents<'input>,
-) -> Result<()> {
+pub fn parse<'input>(text: &'input str, events: &mut dyn XmlEvents<'input>) -> Result<()> {
     let s = &mut Stream::new(text);
 
     // Skip UTF-8 BOM.
@@ -206,16 +196,12 @@ pub fn parse<'input>(
         parse_declaration(s)?;
     }
 
-    parse_misc(s, events)?;
+    parse_misc(s)?;
 
     s.skip_spaces();
     if s.starts_with(b"<!DOCTYPE") {
-        if !allow_dtd {
-            return Err(Error::DtdDetected);
-        }
-
-        parse_doctype(s, events)?;
-        parse_misc(s, events)?;
+        skip_doctype(s)?;
+        parse_misc(s)?;
     }
 
     s.skip_spaces();
@@ -223,7 +209,7 @@ pub fn parse<'input>(
         parse_element(s, events)?;
     }
 
-    parse_misc(s, events)?;
+    parse_misc(s)?;
 
     if !s.at_end() {
         return Err(Error::UnknownToken(s.gen_text_pos()));
@@ -233,13 +219,13 @@ pub fn parse<'input>(
 }
 
 // Misc ::= Comment | PI | S
-fn parse_misc<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
+fn parse_misc<'input>(s: &mut Stream<'input>) -> Result<()> {
     while !s.at_end() {
         s.skip_spaces();
         if s.starts_with(b"<!--") {
-            parse_comment(s, events)?;
+            skip_comment(s)?;
         } else if s.starts_with(b"<?") {
-            parse_pi(s, events)?;
+            skip_pi(s)?;
         } else {
             break;
         }
@@ -293,70 +279,71 @@ fn parse_declaration(s: &mut Stream) -> Result<()> {
 }
 
 // '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'
-fn parse_comment<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
-    let start = s.pos();
+fn skip_comment<'input>(s: &mut Stream<'input>) -> Result<()> {
     s.advance(4);
-    let text = s.consume_chars(|s, c| !(c == '-' && s.starts_with(b"-->")))?;
+    s.skip_chars(|s, c| !(c == '-' && s.starts_with(b"-->")))?;
     s.skip_string(b"-->")?;
-
-    if text.contains("--") {
-        return Err(Error::InvalidComment(s.gen_text_pos_from(start)));
-    }
-
-    if text.ends_with('-') {
-        return Err(Error::InvalidComment(s.gen_text_pos_from(start)));
-    }
-
-    let range = s.range_from(start);
-    events.token(Token::Comment(text, range))?;
-
     Ok(())
 }
 
 // PI       ::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'
 // PITarget ::= Name - (('X' | 'x') ('M' | 'm') ('L' | 'l'))
-fn parse_pi<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
-    if s.starts_with(b"<?xml ") {
-        return Err(Error::UnexpectedDeclaration(s.gen_text_pos()));
-    }
-
-    let start = s.pos();
+fn skip_pi<'input>(s: &mut Stream<'input>) -> Result<()> {
     s.advance(2);
-    let target = s.consume_name()?;
-    s.skip_spaces();
-    let content = s.consume_chars(|s, c| !(c == '?' && s.starts_with(b"?>")))?;
-    let content = if !content.is_empty() {
-        Some(content)
-    } else {
-        None
-    };
-
+    s.skip_chars(|s, c| !(c == '?' && s.starts_with(b"?>")))?;
     s.skip_string(b"?>")?;
-
-    let range = s.range_from(start);
-    events.token(Token::ProcessingInstruction(target, content, range))?;
     Ok(())
 }
 
-fn parse_doctype<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
-    let start = s.pos();
-    parse_doctype_start(s)?;
-    s.skip_spaces();
+// EntityDecl  ::= GEDecl | PEDecl
+// GEDecl      ::= '<!ENTITY' S Name S EntityDef S? '>'
+// PEDecl      ::= '<!ENTITY' S '%' S Name S PEDef S? '>'
+fn skip_entity<'input>(s: &mut Stream<'input>) -> Result<()> {
+    s.advance(8);
+    s.skip_chars(|_, c| !(c == '\'' || c == '"' ))?;
+
+    match s.curr_byte()? {
+        b'\'' => s.skip_chars(|s, c| !(c == '\'' && s.starts_with(b"'>")))?,
+        b'"' => s.skip_chars(|s, c| !(c == '"' && s.starts_with(b"\">") ))?,
+        _ => (),
+    }
+    s.advance(2);
+    Ok(())
+}
+
+// CDSect  ::= CDStart CData CDEnd
+// CDStart ::= '<![CDATA['
+// CDEnd   ::= ']]>'
+fn skip_cdata<'input>(s: &mut Stream<'input>) -> Result<()> {
+    s.advance(9); // <![CDATA[
+    s.skip_chars(|s, c| !(c == ']' && s.starts_with(b"]]>")))?;
+    s.skip_string(b"]]>")?;
+    Ok(())
+}
+
+fn skip_doctype<'input>(s: &mut Stream<'input>) -> Result<()> {
+    s.advance(1);
+    s.consume_chars(|_, c| !(c == '<' || c == '>'))?;
 
     if s.curr_byte() == Ok(b'>') {
         s.advance(1);
         return Ok(());
     }
 
-    s.advance(1); // [
     while !s.at_end() {
         s.skip_spaces();
         if s.starts_with(b"<!ENTITY") {
-            parse_entity_decl(s, events)?;
-        } else if s.starts_with(b"<!--") {
-            parse_comment(s, events)?;
+            skip_entity(s)?;
         } else if s.starts_with(b"<?") {
-            parse_pi(s, events)?;
+            skip_pi(s)?;
+        } else if s.starts_with(b"<!--") {
+            skip_comment(s)?;
+        } else if s.starts_with(b"<!ELEMENT")
+            || s.starts_with(b"<!ATTLIST")
+            || s.starts_with(b"<!NOTATION")
+        {
+            s.skip_bytes(|c| c != b'>');
+            s.consume_byte(b'>')?;
         } else if s.starts_with(b"]") {
             // DTD ends with ']' S? '>', therefore we have to skip possible spaces.
             s.advance(1);
@@ -373,145 +360,11 @@ fn parse_doctype<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'inp
                     return Err(Error::UnexpectedEndOfStream);
                 }
             }
-        } else if s.starts_with(b"<!ELEMENT")
-            || s.starts_with(b"<!ATTLIST")
-            || s.starts_with(b"<!NOTATION")
-        {
-            if consume_decl(s).is_err() {
-                let pos = s.gen_text_pos_from(start);
-                return Err(Error::UnknownToken(pos));
-            }
         } else {
             return Err(Error::UnknownToken(s.gen_text_pos()));
         }
     }
 
-    Ok(())
-}
-
-// doctypedecl ::= '<!DOCTYPE' S Name (S ExternalID)? S? ('[' intSubset ']' S?)? '>'
-fn parse_doctype_start(s: &mut Stream) -> Result<()> {
-    s.advance(9);
-
-    s.consume_spaces()?;
-    s.skip_name()?;
-    s.skip_spaces();
-
-    let _ = parse_external_id(s)?;
-    s.skip_spaces();
-
-    let c = s.curr_byte()?;
-    if c != b'[' && c != b'>' {
-        return Err(Error::InvalidChar2("'[' or '>'", c, s.gen_text_pos()));
-    }
-
-    Ok(())
-}
-
-// ExternalID ::= 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral S SystemLiteral
-fn parse_external_id(s: &mut Stream) -> Result<bool> {
-    let v = if s.starts_with(b"SYSTEM") || s.starts_with(b"PUBLIC") {
-        let start = s.pos();
-        s.advance(6);
-        let id = s.slice_back(start);
-
-        s.consume_spaces()?;
-        let quote = s.consume_quote()?;
-        let _ = s.consume_bytes(|c| c != quote);
-        s.consume_byte(quote)?;
-
-        if id == "SYSTEM" {
-            // Ok
-        } else {
-            s.consume_spaces()?;
-            let quote = s.consume_quote()?;
-            let _ = s.consume_bytes(|c| c != quote);
-            s.consume_byte(quote)?;
-        }
-
-        true
-    } else {
-        false
-    };
-
-    Ok(v)
-}
-
-// EntityDecl  ::= GEDecl | PEDecl
-// GEDecl      ::= '<!ENTITY' S Name S EntityDef S? '>'
-// PEDecl      ::= '<!ENTITY' S '%' S Name S PEDef S? '>'
-fn parse_entity_decl<'input>(
-    s: &mut Stream<'input>,
-    events: &mut dyn XmlEvents<'input>,
-) -> Result<()> {
-    s.advance(8);
-    s.consume_spaces()?;
-
-    let is_ge = if s.try_consume_byte(b'%') {
-        s.consume_spaces()?;
-        false
-    } else {
-        true
-    };
-
-    let name = s.consume_name()?;
-    s.consume_spaces()?;
-    if let Some(definition) = parse_entity_def(s, is_ge)? {
-        events.token(Token::EntityDeclaration(name, definition))?;
-    }
-    s.skip_spaces();
-    s.consume_byte(b'>')?;
-
-    Ok(())
-}
-
-// EntityDef   ::= EntityValue | (ExternalID NDataDecl?)
-// PEDef       ::= EntityValue | ExternalID
-// EntityValue ::= '"' ([^%&"] | PEReference | Reference)* '"' |  "'" ([^%&']
-//                             | PEReference | Reference)* "'"
-// ExternalID  ::= 'SYSTEM' S SystemLiteral | 'PUBLIC' S PubidLiteral S SystemLiteral
-// NDataDecl   ::= S 'NDATA' S Name
-fn parse_entity_def<'input>(
-    s: &mut Stream<'input>,
-    is_ge: bool,
-) -> Result<Option<StrSpan<'input>>> {
-    let c = s.curr_byte()?;
-    match c {
-        b'"' | b'\'' => {
-            let quote = s.consume_quote()?;
-            let start = s.pos();
-            s.skip_bytes(|c| c != quote);
-            let value = s.slice_back_span(start);
-            s.consume_byte(quote)?;
-            Ok(Some(value))
-        }
-        b'S' | b'P' => {
-            if parse_external_id(s)? {
-                if is_ge {
-                    s.skip_spaces();
-                    if s.starts_with(b"NDATA") {
-                        s.advance(5);
-                        s.consume_spaces()?;
-                        s.skip_name()?;
-                        // TODO: NDataDecl is not supported
-                    }
-                }
-
-                Ok(None)
-            } else {
-                Err(Error::InvalidExternalID(s.gen_text_pos()))
-            }
-        }
-        _ => {
-            let pos = s.gen_text_pos();
-            Err(Error::InvalidChar2("a quote, SYSTEM or PUBLIC", c, pos))
-        }
-    }
-}
-
-fn consume_decl(s: &mut Stream) -> Result<()> {
-    s.skip_bytes(|c| c != b'>');
-    s.consume_byte(b'>')?;
     Ok(())
 }
 
@@ -566,7 +419,14 @@ fn parse_element<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'inp
                 let value = s.slice_back_span(value_start);
                 s.consume_byte(quote)?;
                 let end = s.pos();
-                events.token(Token::Attribute(start..end, qname_len, eq_len, prefix, local, value))?;
+                events.token(Token::Attribute(
+                    start..end,
+                    qname_len,
+                    eq_len,
+                    prefix,
+                    local,
+                    value,
+                ))?;
             }
         }
     }
@@ -604,14 +464,14 @@ pub fn parse_content<'input>(
             Ok(b'<') => match s.next_byte() {
                 Ok(b'!') => {
                     if s.starts_with(b"<!--") {
-                        parse_comment(s, events)?;
+                        skip_comment(s)?;
                     } else if s.starts_with(b"<![CDATA[") {
-                        parse_cdata(s, events)?;
+                        skip_cdata(s)?;
                     } else {
                         return Err(Error::UnknownToken(s.gen_text_pos()));
                     }
                 }
-                Ok(b'?') => parse_pi(s, events)?,
+                Ok(b'?') => skip_pi(s)?,
                 Ok(b'/') => {
                     parse_close_element(s, events)?;
                     break;
@@ -624,20 +484,6 @@ pub fn parse_content<'input>(
         }
     }
 
-    Ok(())
-}
-
-// CDSect  ::= CDStart CData CDEnd
-// CDStart ::= '<![CDATA['
-// CData   ::= (Char* - (Char* ']]>' Char*))
-// CDEnd   ::= ']]>'
-fn parse_cdata<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>) -> Result<()> {
-    let start = s.pos();
-    s.advance(9); // <![CDATA[
-    let text = s.consume_chars(|s, c| !(c == ']' && s.starts_with(b"]]>")))?;
-    s.skip_string(b"]]>")?;
-    let range = s.range_from(start);
-    events.token(Token::Cdata(text, range))?;
     Ok(())
 }
 
@@ -680,12 +526,7 @@ fn parse_text<'input>(s: &mut Stream<'input>, events: &mut dyn XmlEvents<'input>
 
 /// Representation of the [Reference](https://www.w3.org/TR/xml/#NT-Reference) value.
 #[derive(Clone, Copy)]
-pub enum Reference<'input> {
-    /// An entity reference.
-    ///
-    /// <https://www.w3.org/TR/xml/#NT-EntityRef>
-    Entity(&'input str),
-
+pub enum Reference {
     /// A character reference.
     ///
     /// <https://www.w3.org/TR/xml/#NT-CharRef>
@@ -889,7 +730,7 @@ impl<'input> Stream<'input> {
     }
 
     /// Consumes according to: <https://www.w3.org/TR/xml/#NT-Reference>
-    pub fn try_consume_reference(&mut self) -> Option<Reference<'input>> {
+    pub fn try_consume_reference(&mut self) -> Option<Reference> {
         let start = self.pos();
 
         // Consume reference on a substream.
@@ -903,7 +744,7 @@ impl<'input> Stream<'input> {
     }
 
     #[inline(never)]
-    fn consume_reference(&mut self) -> Option<Reference<'input>> {
+    fn consume_reference(&mut self) -> Option<Reference> {
         if !self.try_consume_byte(b'&') {
             return None;
         }
@@ -934,7 +775,7 @@ impl<'input> Stream<'input> {
                 "apos" => Reference::Char('\''),
                 "lt" => Reference::Char('<'),
                 "gt" => Reference::Char('>'),
-                _ => Reference::Entity(name),
+                _ => Reference::Char(' '),
             }
         };
 

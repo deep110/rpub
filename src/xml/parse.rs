@@ -1,11 +1,10 @@
-
 // use alloc::string::{String, ToString};
 // use alloc::vec::Vec;
 use core::ops::Range;
 
 use super::{
     AttributeData, Document, ExpandedNameIndexed, NamespaceIdx, Namespaces, NodeData, NodeId,
-    NodeKind, ShortRange, StringStorage, TextPos, NS_XMLNS_URI, NS_XML_PREFIX, NS_XML_URI, PI,
+    NodeKind, ShortRange, StringStorage, TextPos, NS_XMLNS_URI, NS_XML_PREFIX, NS_XML_URI,
     XMLNS,
 };
 
@@ -62,11 +61,6 @@ pub enum Error {
     /// Otherwise, the document is not well-formed.
     MalformedEntityReference(TextPos),
 
-    /// A possible entity reference loop.
-    ///
-    /// The current depth limit is 10. The max number of references per reference is 255.
-    EntityReferenceLoop(TextPos),
-
     /// Attribute value cannot have a `<` character.
     InvalidAttributeValue(TextPos),
 
@@ -88,14 +82,6 @@ pub enum Error {
     /// An XML document can have only one XML declaration
     /// and it must be at the start of the document.
     UnexpectedDeclaration(TextPos),
-
-    /// An XML with DTD detected.
-    ///
-    /// This error will be emitted only when `ParsingOptions::allow_dtd` is set to `false`.
-    DtdDetected,
-
-    /// Indicates that the [`ParsingOptions::nodes_limit`] was reached.
-    NodesLimitReached,
 
     /// Indicates that too many attributes were parsed.
     AttributesLimitReached,
@@ -126,12 +112,6 @@ pub enum Error {
     /// Contains what string was expected.
     InvalidString(&'static str, TextPos),
 
-    /// An invalid ExternalID in the DTD.
-    InvalidExternalID(TextPos),
-
-    /// A comment cannot contain `--` or end with `-`.
-    InvalidComment(TextPos),
-
     /// A Character Data node contains an invalid data.
     ///
     /// Currently, only `]]>` is not allowed.
@@ -160,14 +140,11 @@ impl Error {
             Error::UnexpectedEntityCloseTag(pos) => pos,
             Error::UnknownEntityReference(_, pos) => pos,
             Error::MalformedEntityReference(pos) => pos,
-            Error::EntityReferenceLoop(pos) => pos,
             Error::InvalidAttributeValue(pos) => pos,
             Error::DuplicatedAttribute(_, pos) => pos,
             Error::NoRootNode => TextPos::new(1, 1),
             Error::UnclosedRootNode => TextPos::new(1, 1),
             Error::UnexpectedDeclaration(pos) => pos,
-            Error::DtdDetected => TextPos::new(1, 1),
-            Error::NodesLimitReached => TextPos::new(1, 1),
             Error::AttributesLimitReached => TextPos::new(1, 1),
             Error::NamespacesLimitReached => TextPos::new(1, 1),
             Error::InvalidName(pos) => pos,
@@ -175,8 +152,6 @@ impl Error {
             Error::InvalidChar(_, _, pos) => pos,
             Error::InvalidChar2(_, _, pos) => pos,
             Error::InvalidString(_, pos) => pos,
-            Error::InvalidExternalID(pos) => pos,
-            Error::InvalidComment(pos) => pos,
             Error::InvalidCharacterData(pos) => pos,
             Error::UnknownToken(pos) => pos,
             Error::UnexpectedEndOfStream => TextPos::new(1, 1),
@@ -233,9 +208,6 @@ impl core::fmt::Display for Error {
             Error::UnknownEntityReference(ref name, pos) => {
                 write!(f, "unknown entity reference '{}' at {}", name, pos)
             }
-            Error::EntityReferenceLoop(pos) => {
-                write!(f, "a possible entity reference loop is detected at {}", pos)
-            }
             Error::InvalidAttributeValue(pos) => {
                 write!(f, "unescaped '<' found at {}", pos)
             }
@@ -250,12 +222,6 @@ impl core::fmt::Display for Error {
             }
             Error::UnexpectedDeclaration(pos) => {
                 write!(f, "unexpected XML declaration at {}", pos)
-            }
-            Error::DtdDetected => {
-                write!(f, "XML with DTD detected")
-            }
-            Error::NodesLimitReached => {
-                write!(f, "nodes limit reached")
             }
             Error::AttributesLimitReached => {
                 write!(f, "more than 2^32 attributes were parsed")
@@ -286,12 +252,6 @@ impl core::fmt::Display for Error {
             Error::InvalidString(expected, pos) => {
                 write!(f, "expected '{}' at {}", expected, pos)
             }
-            Error::InvalidExternalID(pos) => {
-                write!(f, "invalid ExternalID at {}", pos)
-            }
-            Error::InvalidComment(pos) => {
-                write!(f, "comment at {} contains '--'", pos)
-            }
             Error::InvalidCharacterData(pos) => {
                 write!(f, "']]>' at {} is not allowed inside a character data", pos)
             }
@@ -308,43 +268,6 @@ impl core::fmt::Display for Error {
 impl std::error::Error for Error {
     fn description(&self) -> &str {
         "an XML parsing error"
-    }
-}
-
-/// Parsing options.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ParsingOptions {
-    /// Allow DTD parsing.
-    ///
-    /// When set to `false`, XML with DTD will cause an error.
-    /// Empty DTD block is not an error.
-    ///
-    /// Currently, there is no option to simply skip DTD.
-    /// Mainly because you will get `UnknownEntityReference` error later anyway.
-    ///
-    /// This flag is set to `false` by default for security reasons,
-    /// but `roxmltree` still has checks for billion laughs attack,
-    /// so this is just an extra security measure.
-    ///
-    /// Default: false
-    pub allow_dtd: bool,
-
-    /// Sets the maximum number of nodes to parse.
-    ///
-    /// Useful when dealing with random input to limit memory usage.
-    ///
-    /// Default: u32::MAX (no limit)
-    pub nodes_limit: u32,
-}
-
-// Explicit for readability.
-#[allow(clippy::derivable_impls)]
-impl Default for ParsingOptions {
-    fn default() -> Self {
-        ParsingOptions {
-            allow_dtd: false,
-            nodes_limit: core::u32::MAX,
-        }
     }
 }
 
@@ -365,8 +288,6 @@ impl<'input> Document<'input> {
     /// We do not support `&[u8]` or `Reader` because the input must be an already allocated
     /// UTF-8 string.
     ///
-    /// This is a shorthand for `Document::parse_with_options(data, ParsingOptions::default())`.
-    ///
     /// # Examples
     ///
     /// ```
@@ -375,31 +296,61 @@ impl<'input> Document<'input> {
     /// ```
     #[inline]
     pub fn parse(text: &str) -> Result<Document> {
-        Self::parse_with_options(text, ParsingOptions::default())
-    }
+        // Trying to guess rough nodes and attributes amount.
+        let nodes_capacity = text.bytes().filter(|c| *c == b'<').count();
+        let attributes_capacity = text.bytes().filter(|c| *c == b'=').count();
 
-    /// Parses the input XML string using to selected options.
-    ///
-    /// We do not support `&[u8]` or `Reader` because the input must be an already allocated
-    /// UTF-8 string.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let opt = roxmltree::ParsingOptions::default();
-    /// let doc = roxmltree::Document::parse_with_options("<e/>", opt).unwrap();
-    /// assert_eq!(doc.descendants().count(), 2); // root node + `e` element node
-    /// ```
-    #[inline]
-    pub fn parse_with_options(text: &str, opt: ParsingOptions) -> Result<Document> {
-        parse(text, opt)
+        // Init document.
+        let mut doc = Document {
+            text,
+            nodes: Vec::with_capacity(nodes_capacity),
+            attributes: Vec::with_capacity(attributes_capacity),
+            namespaces: Namespaces::default(),
+        };
+
+        // Add a root node.
+        doc.nodes.push(NodeData {
+            parent: None,
+            prev_sibling: None,
+            next_subtree: None,
+            last_child: None,
+            kind: NodeKind::Root,
+        });
+
+        doc.namespaces
+            .push_ns(Some(NS_XML_PREFIX), StringStorage::Borrowed(NS_XML_URI))?;
+
+        let mut ctx = Context {
+            namespace_start_idx: 1,
+            current_attributes: Vec::with_capacity(16),
+            awaiting_subtree: Vec::new(),
+            parent_prefixes: Vec::new(),
+            after_text: false,
+            parent_id: NodeId::new(0),
+            tag_name: TagNameSpan::new_null(),
+            doc,
+        };
+        ctx.parent_prefixes.push("");
+
+        tokenizer::parse(text, &mut ctx)?;
+
+        let mut doc = ctx.doc;
+        if !doc.root().children().any(|n| n.is_element()) {
+            return Err(Error::NoRootNode);
+        }
+
+        if ctx.parent_prefixes.len() > 1 {
+            return Err(Error::UnclosedRootNode);
+        }
+
+        doc.nodes.shrink_to_fit();
+        doc.attributes.shrink_to_fit();
+        doc.namespaces.shrink_to_fit();
+
+        Ok(doc)
     }
 }
 
-struct Entity<'input> {
-    name: &'input str,
-    value: StrSpan<'input>,
-}
 
 #[derive(Clone, Copy)]
 struct TagNameSpan<'input> {
@@ -421,104 +372,21 @@ impl<'input> TagNameSpan<'input> {
     }
 }
 
-/// An entity loop detector.
-///
-/// Limits:
-/// - Entities depth is 10.
-/// - Maximum number of entity references per entity reference is 255.
-///
-/// Basically, if a text or an attribute has an entity reference and this reference
-/// has more than 10 nested references - this is an error.
-///
-/// This is useful for simple loops like:
-///
-/// ```text
-/// <!ENTITY a '&b;'>
-/// <!ENTITY b '&a;'>
-/// ```
-///
-/// And, if a text or an attribute has an entity reference and it references more
-/// than 255 references - this is an error.
-///
-/// This is useful for cases like billion laughs attack, where depth can be pretty small,
-/// but the number of references is exponentially increasing:
-///
-/// ```text
-/// <!ENTITY lol "lol">
-/// <!ENTITY lol1 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
-/// <!ENTITY lol2 "&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;&lol1;">
-/// <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
-/// <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;&lol3;">
-/// ```
-#[derive(Default)]
-struct LoopDetector {
-    /// References depth.
-    depth: u8,
-    /// Number of references resolved by the root reference.
-    references: u8,
-}
-
-impl LoopDetector {
-    #[inline]
-    fn inc_depth(&mut self, stream: &Stream) -> Result<()> {
-        if self.depth < 10 {
-            self.depth += 1;
-            Ok(())
-        } else {
-            Err(Error::EntityReferenceLoop(stream.gen_text_pos()))
-        }
-    }
-
-    #[inline]
-    fn dec_depth(&mut self) {
-        if self.depth > 0 {
-            self.depth -= 1;
-        }
-
-        // Reset references count after reaching zero depth.
-        if self.depth == 0 {
-            self.references = 0;
-        }
-    }
-
-    #[inline]
-    fn inc_references(&mut self, stream: &Stream) -> Result<()> {
-        if self.depth == 0 {
-            // Allow infinite amount of references at zero depth.
-            Ok(())
-        } else {
-            if self.references == core::u8::MAX {
-                return Err(Error::EntityReferenceLoop(stream.gen_text_pos()));
-            }
-
-            self.references += 1;
-            Ok(())
-        }
-    }
-}
 
 struct Context<'input> {
-    opt: ParsingOptions,
     namespace_start_idx: usize,
     current_attributes: Vec<TempAttributeData<'input>>,
     awaiting_subtree: Vec<NodeId>,
     parent_prefixes: Vec<&'input str>,
-    entities: Vec<Entity<'input>>,
     after_text: bool,
     parent_id: NodeId,
     tag_name: TagNameSpan<'input>,
-    loop_detector: LoopDetector,
+    // loop_detector: LoopDetector,
     doc: Document<'input>,
 }
 
 impl<'input> Context<'input> {
     fn append_node(&mut self, kind: NodeKind<'input>, range: Range<usize>) -> Result<NodeId> {
-        if self.doc.nodes.len() >= self.opt.nodes_limit as usize {
-            return Err(Error::NodesLimitReached);
-        }
-
-        let _ = range;
-
         let new_child_id = NodeId::from(self.doc.nodes.len());
 
         let appending_element = matches!(kind, NodeKind::Element { .. });
@@ -552,82 +420,9 @@ impl<'input> Context<'input> {
     }
 }
 
-fn parse(text: &str, opt: ParsingOptions) -> Result<Document> {
-    // Trying to guess rough nodes and attributes amount.
-    let nodes_capacity = text.bytes().filter(|c| *c == b'<').count();
-    let attributes_capacity = text.bytes().filter(|c| *c == b'=').count();
-
-    // Init document.
-    let mut doc = Document {
-        text,
-        nodes: Vec::with_capacity(nodes_capacity),
-        attributes: Vec::with_capacity(attributes_capacity),
-        namespaces: Namespaces::default(),
-    };
-
-    // Add a root node.
-    doc.nodes.push(NodeData {
-        parent: None,
-        prev_sibling: None,
-        next_subtree: None,
-        last_child: None,
-        kind: NodeKind::Root,
-    });
-
-    doc.namespaces
-        .push_ns(Some(NS_XML_PREFIX), StringStorage::Borrowed(NS_XML_URI))?;
-
-    let mut ctx = Context {
-        opt,
-        namespace_start_idx: 1,
-        current_attributes: Vec::with_capacity(16),
-        entities: Vec::new(),
-        awaiting_subtree: Vec::new(),
-        parent_prefixes: Vec::new(),
-        after_text: false,
-        parent_id: NodeId::new(0),
-        tag_name: TagNameSpan::new_null(),
-        loop_detector: LoopDetector::default(),
-        doc,
-    };
-    ctx.parent_prefixes.push("");
-
-    tokenizer::parse(text, opt.allow_dtd, &mut ctx)?;
-
-    let mut doc = ctx.doc;
-    if !doc.root().children().any(|n| n.is_element()) {
-        return Err(Error::NoRootNode);
-    }
-
-    if ctx.parent_prefixes.len() > 1 {
-        return Err(Error::UnclosedRootNode);
-    }
-
-    doc.nodes.shrink_to_fit();
-    doc.attributes.shrink_to_fit();
-    doc.namespaces.shrink_to_fit();
-
-    Ok(doc)
-}
-
 impl<'input> tokenizer::XmlEvents<'input> for Context<'input> {
     fn token(&mut self, token: tokenizer::Token<'input>) -> Result<()> {
         match token {
-            tokenizer::Token::ProcessingInstruction(target, value, range) => {
-                let pi = NodeKind::PI(PI { target, value });
-                self.append_node(pi, range)?;
-                self.after_text = false;
-            }
-            tokenizer::Token::Comment(text, range) => {
-                self.append_node(NodeKind::Comment(StringStorage::Borrowed(text)), range)?;
-                self.after_text = false;
-            }
-            tokenizer::Token::EntityDeclaration(name, definition) => {
-                self.entities.push(Entity {
-                    name,
-                    value: definition,
-                });
-            }
             tokenizer::Token::ElementStart(prefix, local, start) => {
                 if prefix == XMLNS {
                     let pos = self.err_pos_at(start + 1);
@@ -652,9 +447,6 @@ impl<'input> tokenizer::XmlEvents<'input> for Context<'input> {
             }
             tokenizer::Token::Text(text, range) => {
                 process_text(text, range, self)?;
-            }
-            tokenizer::Token::Cdata(text, range) => {
-                process_cdata(text, range, self)?;
             }
         }
 
@@ -927,7 +719,7 @@ fn process_text<'input>(
     let mut is_as_is = false; // TODO: explain
     let mut stream = Stream::from_substr(ctx.doc.text, range.clone());
     while !stream.at_end() {
-        match parse_next_chunk(&mut stream, &ctx.entities)? {
+        match parse_next_chunk(&mut stream)? {
             NextChunk::Byte(c) => {
                 if is_as_is {
                     text_buffer.push_raw(c);
@@ -938,68 +730,12 @@ fn process_text<'input>(
             }
             NextChunk::Char(c) => {
                 for b in CharToBytes::new(c) {
-                    if ctx.loop_detector.depth > 0 {
-                        text_buffer.push_from_text(b, stream.at_end());
-                    } else {
-                        // Characters not from entity should be added as is.
-                        // Not sure why... At least `lxml` produces the same result.
-                        text_buffer.push_raw(b);
-                        is_as_is = true;
-                    }
+                    // Characters not from entity should be added as is.
+                    // Not sure why... At least `lxml` produces the same result.
+                    text_buffer.push_raw(b);
+                    is_as_is = true;
                 }
             }
-            NextChunk::Text(fragment) => {
-                is_as_is = false;
-
-                if !text_buffer.is_empty() {
-                    let storage = StringStorage::new_owned(text_buffer.to_str());
-                    append_text(storage, range.clone(), ctx)?;
-                    text_buffer.clear();
-                    ctx.after_text = true;
-                }
-
-                ctx.loop_detector.inc_references(&stream)?;
-                ctx.loop_detector.inc_depth(&stream)?;
-
-                let mut stream = Stream::from_substr(ctx.doc.text, fragment.range());
-                let prev_tag_name = ctx.tag_name;
-                ctx.tag_name = TagNameSpan::new_null();
-                tokenizer::parse_content(&mut stream, ctx)?;
-                ctx.tag_name = prev_tag_name;
-                text_buffer.clear();
-
-                ctx.loop_detector.dec_depth();
-            }
-        }
-    }
-
-    if !text_buffer.is_empty() {
-        append_text(StringStorage::new_owned(text_buffer.finish()), range, ctx)?;
-        ctx.after_text = true;
-    }
-
-    Ok(())
-}
-
-// While the whole purpose of CDATA is to indicate to an XML library that this text
-// has to be stored as is, carriage return (`\r`) is still has to be replaced with `\n`.
-fn process_cdata<'input>(
-    text: &'input str,
-    range: Range<usize>,
-    ctx: &mut Context<'input>,
-) -> Result<()> {
-    // Add text as is if it has only valid characters.
-    if !text.as_bytes().contains(&b'\r') {
-        append_text(StringStorage::Borrowed(text), range, ctx)?;
-        ctx.after_text = true;
-        return Ok(());
-    }
-
-    let mut text_buffer = TextBuffer::new();
-    let count = text.chars().count();
-    for (i, c) in text.chars().enumerate() {
-        for b in CharToBytes::new(c) {
-            text_buffer.push_from_text(b, i + 1 == count);
         }
     }
 
@@ -1036,13 +772,12 @@ fn append_text<'input>(
     Ok(())
 }
 
-enum NextChunk<'a> {
+enum NextChunk {
     Byte(u8),
     Char(char),
-    Text(StrSpan<'a>),
 }
 
-fn parse_next_chunk<'a>(stream: &mut Stream<'a>, entities: &[Entity<'a>]) -> Result<NextChunk<'a>> {
+fn parse_next_chunk<'a>(stream: &mut Stream<'a>) -> Result<NextChunk> {
     debug_assert!(!stream.at_end());
 
     // Safe, because we already checked that stream is not at the end.
@@ -1054,14 +789,6 @@ fn parse_next_chunk<'a>(stream: &mut Stream<'a>, entities: &[Entity<'a>]) -> Res
         let start = stream.pos();
         match stream.try_consume_reference() {
             Some(Reference::Char(ch)) => Ok(NextChunk::Char(ch)),
-            Some(Reference::Entity(name)) => entities
-                .iter()
-                .find(|e| e.name == name)
-                .map(|e| NextChunk::Text(e.value))
-                .ok_or_else(|| {
-                    let pos = stream.gen_text_pos_from(start);
-                    Error::UnknownEntityReference(name.into(), pos)
-                }),
             None => {
                 let pos = stream.gen_text_pos_from(start);
                 Err(Error::MalformedEntityReference(pos))
@@ -1116,35 +843,11 @@ fn _normalize_attribute(text: StrSpan, buffer: &mut TextBuffer, ctx: &mut Contex
         match stream.try_consume_reference() {
             Some(Reference::Char(ch)) => {
                 for b in CharToBytes::new(ch) {
-                    if ctx.loop_detector.depth > 0 {
-                        // Escaped `<` inside an ENTITY is an error.
-                        // Escaped `<` outside an ENTITY is ok.
-                        if b == b'<' {
-                            return Err(Error::InvalidAttributeValue(
-                                stream.gen_text_pos_from(start),
-                            ));
-                        }
-
-                        buffer.push_from_attr(b, None);
-                    } else {
-                        // Characters not from entity should be added as is.
-                        // Not sure why... At least `lxml` produces the same results.
-                        buffer.push_raw(b);
-                    }
+                    // Characters not from entity should be added as is.
+                    // Not sure why... At least `lxml` produces the same results.
+                    buffer.push_raw(b);
                 }
             }
-            Some(Reference::Entity(name)) => match ctx.entities.iter().find(|e| e.name == name) {
-                Some(entity) => {
-                    ctx.loop_detector.inc_references(&stream)?;
-                    ctx.loop_detector.inc_depth(&stream)?;
-                    _normalize_attribute(entity.value, buffer, ctx)?;
-                    ctx.loop_detector.dec_depth();
-                }
-                None => {
-                    let pos = stream.gen_text_pos_from(start);
-                    return Err(Error::UnknownEntityReference(name.into(), pos));
-                }
-            },
             None => {
                 let pos = stream.gen_text_pos_from(start);
                 return Err(Error::MalformedEntityReference(pos));

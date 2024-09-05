@@ -298,20 +298,8 @@ pub enum NodeType {
     ///
     /// Only an element can have a tag name and attributes.
     Element,
-    /// A processing instruction.
-    PI,
-    /// A comment node.
-    Comment,
     /// A text node.
     Text,
-}
-
-/// A processing instruction.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-#[allow(missing_docs)]
-pub struct PI<'input> {
-    pub target: &'input str,
-    pub value: Option<&'input str>,
 }
 
 /// A short range.
@@ -402,8 +390,6 @@ enum NodeKind<'input> {
         attributes: ShortRange,
         namespaces: ShortRange,
     },
-    PI(PI<'input>),
-    Comment(StringStorage<'input>),
     Text(StringStorage<'input>),
 }
 
@@ -865,8 +851,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         match self.d.kind {
             NodeKind::Root => NodeType::Root,
             NodeKind::Element { .. } => NodeType::Element,
-            NodeKind::PI { .. } => NodeType::PI,
-            NodeKind::Comment(_) => NodeType::Comment,
             NodeKind::Text(_) => NodeType::Text,
         }
     }
@@ -881,18 +865,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
     #[inline]
     pub fn is_element(&self) -> bool {
         self.node_type() == NodeType::Element
-    }
-
-    /// Checks that node is a processing instruction node.
-    #[inline]
-    pub fn is_pi(&self) -> bool {
-        self.node_type() == NodeType::PI
-    }
-
-    /// Checks that node is a comment node.
-    #[inline]
-    pub fn is_comment(&self) -> bool {
-        self.node_type() == NodeType::Comment
     }
 
     /// Checks that node is a text node.
@@ -1174,7 +1146,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
                 },
                 _ => None,
             },
-            NodeKind::Comment(ref text) => Some(text),
             NodeKind::Text(ref text) => Some(text),
             _ => None,
         }
@@ -1215,15 +1186,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
                 _ => None,
             },
             None => None,
-        }
-    }
-
-    /// Returns node as Processing Instruction.
-    #[inline]
-    pub fn pi(&self) -> Option<PI<'input>> {
-        match self.d.kind {
-            NodeKind::PI(pi) => Some(pi),
-            _ => None,
         }
     }
 
@@ -1389,10 +1351,6 @@ impl<'a, 'input: 'a> fmt::Debug for Node<'a, 'input> {
                     self.namespaces()
                 )
             }
-            NodeKind::PI(pi) => {
-                write!(f, "PI {{ target: {:?}, value: {:?} }}", pi.target, pi.value)
-            }
-            NodeKind::Comment(ref text) => write!(f, "Comment({:?})", text.as_str()),
             NodeKind::Text(ref text) => write!(f, "Text({:?})", text.as_str()),
         }
     }
