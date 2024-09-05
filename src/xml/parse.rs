@@ -124,6 +124,8 @@ pub enum Error {
     ///
     /// Should only appear on invalid input data.
     UnexpectedEndOfStream,
+
+    NodeNotFound(&'static str),
 }
 
 impl Error {
@@ -155,6 +157,7 @@ impl Error {
             Error::InvalidCharacterData(pos) => pos,
             Error::UnknownToken(pos) => pos,
             Error::UnexpectedEndOfStream => TextPos::new(1, 1),
+            Error::NodeNotFound(_) => TextPos::new(1, 1),
         }
     }
 }
@@ -260,6 +263,9 @@ impl core::fmt::Display for Error {
             }
             Error::UnexpectedEndOfStream => {
                 write!(f, "unexpected end of stream")
+            }
+            Error::NodeNotFound(value) => {
+                write!(f, "required '{}' tag or attribute not found", value)
             }
         }
     }

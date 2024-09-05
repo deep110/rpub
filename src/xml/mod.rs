@@ -72,8 +72,8 @@ impl fmt::Display for TextPos {
 /// A tree consists of [`Nodes`].
 /// There are no separate structs for each node type.
 /// So you should check the current node type yourself via [`Node::node_type()`].
-/// There are only [5 types](enum.NodeType.html):
-/// Root, Element, PI, Comment and Text.
+/// There are only [3 types](enum.NodeType.html):
+/// Root, Element and Text.
 ///
 /// As you can see there are no XML declaration and CDATA types.
 /// The XML declaration is basically skipped, since it doesn't contain any
@@ -974,25 +974,33 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
             .unwrap_or(None)
     }
 
-    /// Returns an URI for a given prefix.
+        /// Returns element's attribute value.
     ///
     /// # Examples
     ///
     /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns:n='http://www.w3.org'/>").unwrap();
+    /// let doc = roxmltree::Document::parse("<e a='b'/>").unwrap();
     ///
-    /// assert_eq!(doc.root_element().lookup_namespace_uri(Some("n")), Some("http://www.w3.org"));
+    /// assert_eq!(doc.root_element().attribute("a")?, "b");
     /// ```
     ///
     /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns='http://www.w3.org'/>").unwrap();
+    /// let doc = roxmltree::Document::parse(
+    ///     "<e xmlns:n='http://www.w3.org' a='b' n:a='c'/>"
+    /// ).unwrap();
     ///
-    /// assert_eq!(doc.root_element().lookup_namespace_uri(None), Some("http://www.w3.org"));
+    /// assert_eq!(doc.root_element().attribute("a")?, "b");
+    /// assert_eq!(doc.root_element().attribute(("http://www.w3.org", "a"))?, "c");
     /// ```
-    pub fn lookup_namespace_uri(&self, prefix: Option<&str>) -> Option<&'a str> {
-        self.namespaces()
-            .find(|ns| ns.name == prefix)
-            .map(|v| v.uri.as_ref())
+    pub fn req_attribute<'n, 'm, N>(&self, name: N) -> Result<&'a str, Error>
+    where
+        N: Into<ExpandedName<'n, 'm>>,
+    {
+        let name = name.into();
+        self.attributes()
+            .find(|a| a.data.name.as_expanded_name(self.doc) == name)
+            .map(|a| a.value())
+            .ok_or_else(|| Error::NodeNotFound(""))
     }
 
     /// Returns element's attribute value.
@@ -1021,20 +1029,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         self.attributes()
             .find(|a| a.data.name.as_expanded_name(self.doc) == name)
             .map(|a| a.value())
-    }
-
-    /// Returns element's attribute object.
-    ///
-    /// The same as [`attribute()`], but returns the `Attribute` itself instead of a value string.
-    ///
-    /// [`attribute()`]: struct.Node.html#method.attribute
-    pub fn attribute_node<'n, 'm, N>(&self, name: N) -> Option<Attribute<'a, 'input>>
-    where
-        N: Into<ExpandedName<'n, 'm>>,
-    {
-        let name = name.into();
-        self.attributes()
-            .find(|a| a.data.name.as_expanded_name(self.doc) == name)
     }
 
     /// Checks that element has a specified attribute.
