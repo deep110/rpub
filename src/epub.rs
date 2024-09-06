@@ -1,4 +1,4 @@
-use super::xml::{Document, Node, ParsingOptions};
+use super::xml::{Document, Node};
 use std::{
     collections::HashMap,
     fs::File,
@@ -34,10 +34,9 @@ pub struct Metadata {
 
 #[derive(Debug)]
 pub struct Chapter {
-    pub title: String,
-    pub id: String,
     pub relative_path: String,
-    pub text: Option<String>,
+    pub text: String,
+    ids: Vec<(String, usize)>,
     // pub lines: Vec<(usize, usize)>,
 }
 
@@ -73,27 +72,95 @@ impl Metadata {
 }
 
 impl Chapter {
-    fn new(id: &str, path: &str) -> Self {
+    fn new(path: &str) -> Self {
         Chapter {
-            title: id.to_string(),
-            id: id.to_string(),
             relative_path: path.to_string(),
-            text: None,
+            text: String::new(),
+            ids: Vec::new(),
         }
     }
 
-    // fn render(&mut self, n: Node, open: Attribute, close: Attribute) {
-    //     self.state.set(open);
-    //     self.attrs.push((self.text.len(), open, self.state));
-    //     self.render_text(n);
-    //     self.state.unset(open);
-    //     self.attrs.push((self.text.len(), close, self.state));
-    // }
-    // fn render_text(&mut self, n: Node) {
-    //     for child in n.children() {
-    //         render(child, self);
-    //     }
-    // }
+    fn render(&mut self, n: Node) {
+        // self.state.set(open);
+        // self.attrs.push((self.text.len(), open, self.state));
+
+        // self.parse_children(n);
+
+        // self.state.unset(open);
+        // self.attrs.push((self.text.len(), close, self.state));
+    }
+
+    fn parse_children(&mut self, node: Node) {
+        for child in node.children() {
+            self.parse(child);
+        }
+    }
+
+    fn parse(&mut self, n: Node) {
+        if n.is_text() {
+            let text = n.text().unwrap();
+            let content: Vec<_> = text.split_ascii_whitespace().collect();
+
+            if text.starts_with(char::is_whitespace) {
+                self.text.push(' ');
+            }
+            self.text.push_str(&content.join(" "));
+            if text.ends_with(char::is_whitespace) {
+                self.text.push(' ');
+            }
+            return;
+        }
+
+        if let Some(id) = n.attribute("id") {
+            self.ids.push((id.to_string(), self.text.len()));
+        }
+
+        match n.tag_name().name() {
+            "br" => self.text.push('\n'),
+            "hr" => self.text.push_str("\n* * *\n"),
+            "img" => self.text.push_str("\n[IMAGE]\n"),
+            // "a" => {
+            //     match n.attribute("href") {
+            //         // TODO open external urls in browser
+            //         Some(url) if !url.starts_with("http") => {
+            //             let start = c.text.len();
+            //             c.render(n, Attribute::Underlined, Attribute::NoUnderline);
+            //             c.links.push((start, c.text.len(), url.to_string()));
+            //         }
+            //         _ => c.render_text(n),
+            //     }
+            // }
+            "a" => (),
+            // "em" => self.render(n, Attribute::Italic, Attribute::NoItalic),
+            // "strong" => self.render(n, Attribute::Bold, Attribute::NormalIntensity),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                self.text.push('\n');
+                // self.render(n, Attribute::Bold, Attribute::NormalIntensity);
+                self.parse_children(n);
+                self.text.push('\n');
+            }
+            "blockquote" | "div" | "p" | "tr" => {
+                // TODO compress newlines
+                self.text.push('\n');
+                self.parse_children(n);
+                self.text.push('\n');
+            }
+            "li" => {
+                self.text.push_str("\n- ");
+                self.parse_children(n);
+                self.text.push('\n');
+            }
+            "pre" => {
+                self.text.push_str("\n  ");
+                n.descendants()
+                    .filter(Node::is_text)
+                    .map(|n| n.text().unwrap().replace('\n', "\n  "))
+                    .for_each(|s| self.text.push_str(&s));
+                self.text.push('\n');
+            }
+            _ => self.parse_children(n),
+        }
+    }
 }
 
 impl Epub {
@@ -133,8 +200,7 @@ impl Epub {
             .descendants()
             .find(|n| n.has_tag_name("rootfile"))
             .ok_or_else(|| to_parse_error())?
-            .attribute("full-path")
-            .ok_or_else(|| to_parse_error())?;
+            .req_attribute("full-path")?;
 
         let xml = self.get_raw_text(path)?;
         let content_opf = Document::parse(&xml)?;
@@ -153,30 +219,22 @@ impl Epub {
         let metadata_node = children.next().unwrap();
         let manifest_node = children.next().unwrap();
         let spine_node = children.next().unwrap();
-        let version = content_opf
-            .root_element()
-            .attribute("version")
-            .ok_or_else(|| to_parse_error())?;
-        let mut toc_file_path: Option<&str> = None;
+        let version = content_opf.root_element().req_attribute("version")?;
 
         // Parse Ebook Metadata
         self.metadata = Some(Metadata::new(metadata_node));
 
         // Parse ebook chapter links in order
-        let mut manifest = HashMap::new();
-        manifest_node
-            .children()
-            .filter(Node::is_element)
-            .for_each(|n| {
-                manifest.insert(n.attribute("id").unwrap(), n.attribute("href").unwrap());
-                if version == "3.0" && n.attribute("properties") == Some("nav") {
-                    toc_file_path = Some(n.attribute("href").unwrap());
-                } else {
-                    if n.attribute("media-type") == Some("application/x-dtbncx+xml") {
-                        toc_file_path = Some(n.attribute("href").unwrap());
-                    }
-                }
-            });
+        let mut manifest: HashMap<&str, &str> = HashMap::new();
+        let mut toc_file_path: Option<&str> = None;
+        for n in manifest_node.children().filter(Node::is_element) {
+            manifest.insert(n.req_attribute("id")?, n.req_attribute("href")?);
+            if version == "3.0" && n.attribute("properties") == Some("nav") {
+                toc_file_path = n.attribute("href");
+            } else if n.attribute("media-type") == Some("application/x-dtbncx+xml") {
+                toc_file_path = n.attribute("href");
+            }
+        }
 
         // Parse TOC
         let mut nav: HashMap<String, (String, String)> = HashMap::new();
@@ -187,12 +245,12 @@ impl Epub {
 
         // Parse Ebook Chapters
         for (i, node) in spine_node.children().filter(Node::is_element).enumerate() {
-            let id = node.attribute("idref").ok_or_else(to_parse_error)?;
+            let id = node.req_attribute("idref")?;
             if let Some(path) = manifest.remove(id) {
                 if let Some((exact_path, title)) = nav.remove(path) {
                     self.toc.push((i, title, exact_path));
                 }
-                self.chapters.push(Chapter::new(id, path));
+                self.chapters.push(Chapter::new(path));
             } else {
                 return Err(to_parse_error().into());
             }
@@ -208,11 +266,7 @@ impl Epub {
         nav: &mut HashMap<String, (String, String)>,
     ) -> Result<()> {
         let xml = self.get_raw_text(&toc_path)?;
-        let opt = ParsingOptions {
-            allow_dtd: true,
-            nodes_limit: u32::MAX,
-        };
-        let doc = Document::parse_with_options(&xml, opt)?;
+        let doc = Document::parse(&xml)?;
 
         if version == "3.0" {
             if let Some(ol) = doc
@@ -253,18 +307,15 @@ impl Epub {
     }
 
     pub fn read_chapter(&mut self, index: usize) -> Result<()> {
-        let mut chapter = &self.chapters[index];
-        let xml = self.get_raw_text(&format!("{}{}", self.root_dir, chapter.relative_path))?;
-        let opt = ParsingOptions {
-            allow_dtd: true,
-            nodes_limit: u32::MAX,
-        };
-        let doc = Document::parse_with_options(&xml, opt)?;
+        // let mut chapter = &mut self.chapters[index];
+        let relative_path = self.chapters[index].relative_path.clone();
+
+        let xml = self.get_raw_text(&format!("{}{}", &self.root_dir, relative_path))?;
+        let doc = Document::parse(&xml)?;
         let body = doc.root_element().last_element_child().unwrap();
 
-        println!("{:?}", doc.root_element());
+        self.chapters[index].parse(body);
 
-        // render(body, &mut c);
         // if chapter.text.trim().is_empty() {
         //     return Ok(());
         // }
@@ -283,68 +334,3 @@ impl Epub {
         Ok(())
     }
 }
-
-// fn render(n: Node, c: &mut Chapter) {
-//     if n.is_text() {
-//         let text = n.text().unwrap();
-//         let content: Vec<_> = text.split_ascii_whitespace().collect();
-
-//         if text.starts_with(char::is_whitespace) {
-//             c.text.push(' ');
-//         }
-//         c.text.push_str(&content.join(" "));
-//         if text.ends_with(char::is_whitespace) {
-//             c.text.push(' ');
-//         }
-//         return;
-//     }
-
-//     if let Some(id) = n.attribute("id") {
-//         c.frag.push((id.to_string(), c.text.len()));
-//     }
-
-//     match n.tag_name().name() {
-//         "br" => c.text.push('\n'),
-//         "hr" => c.text.push_str("\n* * *\n"),
-//         "img" => c.text.push_str("\n[IMG]\n"),
-//         "a" => {
-//             match n.attribute("href") {
-//                 // TODO open external urls in browser
-//                 Some(url) if !url.starts_with("http") => {
-//                     let start = c.text.len();
-//                     c.render(n, Attribute::Underlined, Attribute::NoUnderline);
-//                     c.links.push((start, c.text.len(), url.to_string()));
-//                 }
-//                 _ => c.render_text(n),
-//             }
-//         }
-//         "em" => c.render(n, Attribute::Italic, Attribute::NoItalic),
-//         "strong" => c.render(n, Attribute::Bold, Attribute::NormalIntensity),
-//         "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-//             c.text.push('\n');
-//             c.render(n, Attribute::Bold, Attribute::NormalIntensity);
-//             c.text.push('\n');
-//         }
-//         "blockquote" | "div" | "p" | "tr" => {
-//             // TODO compress newlines
-//             c.text.push('\n');
-//             c.render_text(n);
-//             c.text.push('\n');
-//         }
-//         "li" => {
-//             c.text.push_str("\n- ");
-//             c.render_text(n);
-//             c.text.push('\n');
-//         }
-//         "pre" => {
-//             c.text.push_str("\n  ");
-//             n
-//                 .descendants()
-//                 .filter(Node::is_text)
-//                 .map(|n| n.text().unwrap().replace('\n', "\n  "))
-//                 .for_each(|s| c.text.push_str(&s));
-//             c.text.push('\n');
-//         }
-//         _ => c.render_text(n),
-//     }
-// }

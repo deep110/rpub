@@ -3,7 +3,6 @@ mod xml;
 mod epub;
 
 use std::{fs, path, process::exit};
-use error::Error;
 
 pub type Result<T> = std::result::Result<T, error::Error>;
 
@@ -53,8 +52,10 @@ fn main() -> Result<()> {
     }
     let mut ebook = epub::Epub::new(path.unwrap()?)?;
     // println!("{:?}", ebook.chapters);
-    println!("TOC: {:?}", ebook.toc);
-    ebook.read_chapter(3)?;
+    // println!("TOC: {:?}", ebook.toc);
+    let chi = 7;
+    ebook.read_chapter(chi)?;
+    println!("{}", ebook.chapters[chi].text);
 
     Ok(())
 }

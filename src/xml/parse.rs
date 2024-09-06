@@ -362,7 +362,6 @@ impl<'input> Document<'input> {
 struct TagNameSpan<'input> {
     prefix: &'input str,
     name: &'input str,
-    pos: usize,
     prefix_pos: usize,
 }
 
@@ -372,7 +371,6 @@ impl<'input> TagNameSpan<'input> {
         Self {
             prefix: "",
             name: "",
-            pos: 0,
             prefix_pos: 0,
         }
     }
@@ -387,12 +385,11 @@ struct Context<'input> {
     after_text: bool,
     parent_id: NodeId,
     tag_name: TagNameSpan<'input>,
-    // loop_detector: LoopDetector,
     doc: Document<'input>,
 }
 
 impl<'input> Context<'input> {
-    fn append_node(&mut self, kind: NodeKind<'input>, range: Range<usize>) -> Result<NodeId> {
+    fn append_node(&mut self, kind: NodeKind<'input>) -> Result<NodeId> {
         let new_child_id = NodeId::from(self.doc.nodes.len());
 
         let appending_element = matches!(kind, NodeKind::Element { .. });
@@ -438,7 +435,6 @@ impl<'input> tokenizer::XmlEvents<'input> for Context<'input> {
                 self.tag_name = TagNameSpan {
                     prefix,
                     name: local,
-                    pos: start,
                     prefix_pos: start + 1,
                 };
 
@@ -579,8 +575,7 @@ fn process_element<'input>(
                     },
                     attributes,
                     namespaces,
-                },
-                ctx.tag_name.pos..token_range.end,
+                }
             )?;
             ctx.awaiting_subtree.push(new_element_id);
         }
@@ -624,8 +619,7 @@ fn process_element<'input>(
                     },
                     attributes,
                     namespaces,
-                },
-                ctx.tag_name.pos..token_range.end,
+                }
             )?;
             ctx.parent_prefixes.push(ctx.tag_name.prefix);
         }
@@ -716,7 +710,7 @@ fn process_text<'input>(
 ) -> Result<()> {
     // Add text as is if it has only valid characters.
     if !text.bytes().any(|b| b == b'&' || b == b'\r') {
-        append_text(StringStorage::Borrowed(text), range, ctx)?;
+        append_text(StringStorage::Borrowed(text), ctx)?;
         ctx.after_text = true;
         return Ok(());
     }
@@ -746,7 +740,7 @@ fn process_text<'input>(
     }
 
     if !text_buffer.is_empty() {
-        append_text(StringStorage::new_owned(text_buffer.finish()), range, ctx)?;
+        append_text(StringStorage::new_owned(text_buffer.finish()), ctx)?;
         ctx.after_text = true;
     }
 
@@ -755,7 +749,6 @@ fn process_text<'input>(
 
 fn append_text<'input>(
     text: StringStorage<'input>,
-    range: Range<usize>,
     ctx: &mut Context<'input>,
 ) -> Result<()> {
     if ctx.after_text {
@@ -772,7 +765,7 @@ fn append_text<'input>(
             }
         }
     } else {
-        ctx.append_node(NodeKind::Text(text), range)?;
+        ctx.append_node(NodeKind::Text(text))?;
     }
 
     Ok(())
@@ -1004,19 +997,8 @@ impl TextBuffer {
     }
 
     #[inline]
-    fn clear(&mut self) {
-        self.buffer.clear();
-    }
-
-    #[inline]
     fn is_empty(&self) -> bool {
         self.buffer.is_empty()
-    }
-
-    #[inline]
-    fn to_str(&self) -> &str {
-        // `unwrap` is safe, because buffer must contain a valid UTF-8 string.
-        core::str::from_utf8(&self.buffer).unwrap()
     }
 
     #[inline]

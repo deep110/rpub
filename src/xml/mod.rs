@@ -476,23 +476,6 @@ pub struct Attribute<'a, 'input: 'a> {
 }
 
 impl<'a, 'input> Attribute<'a, 'input> {
-    /// Returns attribute's namespace URI.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse(
-    ///     "<e xmlns:n='http://www.w3.org' a='b' n:a='c'/>"
-    /// ).unwrap();
-    ///
-    /// assert_eq!(doc.root_element().attributes().nth(0).unwrap().namespace(), None);
-    /// assert_eq!(doc.root_element().attributes().nth(1).unwrap().namespace(), Some("http://www.w3.org"));
-    /// ```
-    #[inline]
-    pub fn namespace(&self) -> Option<&'a str> {
-        self.data.name.namespace(self.doc).map(Namespace::uri)
-    }
-
     /// Returns attribute's name.
     ///
     /// # Examples
@@ -736,23 +719,6 @@ impl<'a, 'b> ExpandedName<'a, 'b> {
     }
 }
 
-impl ExpandedName<'static, 'static> {
-    /// Create a new instance from static data.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use roxmltree::ExpandedName;
-    /// const DAV_HREF: ExpandedName =
-    ///     ExpandedName::from_static("urn:ietf:params:xml:ns:caldav:", "calendar-data");
-    /// ```
-    pub const fn from_static(uri: &'static str, name: &'static str) -> Self {
-        Self {
-            uri: Some(uri),
-            name,
-        }
-    }
-}
 
 impl fmt::Debug for ExpandedName<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -927,54 +893,7 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         }
     }
 
-    /// Returns node's default namespace URI.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns='http://www.w3.org'/>").unwrap();
-    ///
-    /// assert_eq!(doc.root_element().default_namespace(), Some("http://www.w3.org"));
-    /// ```
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns:n='http://www.w3.org'/>").unwrap();
-    ///
-    /// assert_eq!(doc.root_element().default_namespace(), None);
-    /// ```
-    pub fn default_namespace(&self) -> Option<&'a str> {
-        self.namespaces()
-            .find(|ns| ns.name.is_none())
-            .map(|v| v.uri.as_ref())
-    }
-
-    /// Returns a prefix for a given namespace URI.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns:n='http://www.w3.org'/>").unwrap();
-    ///
-    /// assert_eq!(doc.root_element().lookup_prefix("http://www.w3.org"), Some("n"));
-    /// ```
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse("<e xmlns:n=''/>").unwrap();
-    ///
-    /// assert_eq!(doc.root_element().lookup_prefix(""), Some("n"));
-    /// ```
-    pub fn lookup_prefix(&self, uri: &str) -> Option<&'input str> {
-        if uri == NS_XML_URI {
-            return Some(NS_XML_PREFIX);
-        }
-
-        self.namespaces()
-            .find(|ns| &*ns.uri == uri)
-            .map(|v| v.name)
-            .unwrap_or(None)
-    }
-
-        /// Returns element's attribute value.
+    /// Returns element's attribute value.
     ///
     /// # Examples
     ///
