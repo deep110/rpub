@@ -46,6 +46,12 @@ impl From<zip::result::ZipError> for Error {
     }
 }
 
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::ParseError(format!("Unable to display: {}", err.to_string()))
+    }
+}
+
 /// function to create file not found error
 pub fn to_fnf_error(file_path: String) -> Error {
     Error::FileNotFound(file_path)

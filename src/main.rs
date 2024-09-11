@@ -1,10 +1,43 @@
 mod error;
 mod xml;
 mod epub;
+mod reader;
 
-use std::{fs, path, process::exit};
+use std::{fs::{self}, path, process::exit};
 
 pub type Result<T> = std::result::Result<T, error::Error>;
+
+use std::fs::OpenOptions;
+use std::io::Write;
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
+lazy_static! {
+    static ref LOG_FILE: Mutex<std::fs::File> = Mutex::new(
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open("debug.log")
+            .expect("Failed to open log file")
+    );
+}
+
+pub fn log(message: &str) {
+    if let Ok(mut file) = LOG_FILE.lock() {
+        if let Err(e) = writeln!(file, "{}", message) {
+            eprintln!("Logging error: {}", e);
+        }
+    }
+}
+
+#[macro_export]
+macro_rules! log {
+    ($($arg:tt)*) => {
+        crate::log(&format!($($arg)*));
+    };
+}
+
 
 #[derive(argh::FromArgs)]
 // #[argh(help_triggers("-h", "--help", "help"))]
@@ -38,6 +71,8 @@ fn get_ebook_path(path: Option<String>) -> Option<Result<path::PathBuf>> {
 
 
 fn main() -> Result<()> {
+    lazy_static::initialize(&LOG_FILE);
+
     let args: Args = argh::from_env();
 
     if args.history {
@@ -51,11 +86,11 @@ fn main() -> Result<()> {
         exit(1);
     }
     let mut ebook = epub::Epub::new(path.unwrap()?)?;
+
+    reader::read_ebook(&mut ebook)?;
+
     // println!("{:?}", ebook.chapters);
     // println!("TOC: {:?}", ebook.toc);
-    let chi = 7;
-    ebook.read_chapter(chi)?;
-    println!("{}", ebook.chapters[chi].text);
 
     Ok(())
 }

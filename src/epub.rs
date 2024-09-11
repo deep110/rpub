@@ -37,6 +37,7 @@ pub struct Chapter {
     pub relative_path: String,
     pub text: String,
     ids: Vec<(String, usize)>,
+    is_parsed: bool,
     // pub lines: Vec<(usize, usize)>,
 }
 
@@ -77,17 +78,8 @@ impl Chapter {
             relative_path: path.to_string(),
             text: String::new(),
             ids: Vec::new(),
+            is_parsed: false,
         }
-    }
-
-    fn render(&mut self, n: Node) {
-        // self.state.set(open);
-        // self.attrs.push((self.text.len(), open, self.state));
-
-        // self.parse_children(n);
-
-        // self.state.unset(open);
-        // self.attrs.push((self.text.len(), close, self.state));
     }
 
     fn parse_children(&mut self, node: Node) {
@@ -118,25 +110,35 @@ impl Chapter {
         match n.tag_name().name() {
             "br" => self.text.push('\n'),
             "hr" => self.text.push_str("\n* * *\n"),
-            "img" => self.text.push_str("\n[IMAGE]\n"),
-            // "a" => {
-            //     match n.attribute("href") {
-            //         // TODO open external urls in browser
-            //         Some(url) if !url.starts_with("http") => {
-            //             let start = c.text.len();
-            //             c.render(n, Attribute::Underlined, Attribute::NoUnderline);
-            //             c.links.push((start, c.text.len(), url.to_string()));
-            //         }
-            //         _ => c.render_text(n),
-            //     }
-            // }
-            "a" => (),
-            // "em" => self.render(n, Attribute::Italic, Attribute::NoItalic),
-            // "strong" => self.render(n, Attribute::Bold, Attribute::NormalIntensity),
+            "img" | "image" => self.text.push_str("\n[IMAGE]\n"),
+            "a" => {
+                match n.attribute("href") {
+                    // TODO open external urls in browser
+                    Some(url) if !url.starts_with("http") => {
+                        // let start = c.text.len();
+                        self.text.push_str(&termion::style::Underline.to_string());
+                        self.parse_children(n);
+                        self.text.push_str(&termion::style::NoUnderline.to_string());
+                        // c.links.push((start, c.text.len(), url.to_string()));
+                    }
+                    _ => self.parse_children(n),
+                }
+            }
+            "em" => {
+                self.text.push_str(&termion::style::Italic.to_string());
+                self.parse_children(n);
+                self.text.push_str(&termion::style::NoItalic.to_string());
+            }
+            "strong" => {
+                self.text.push_str(&termion::style::Bold.to_string());
+                self.parse_children(n);
+                self.text.push_str(&termion::style::Reset.to_string());
+            }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.text.push('\n');
-                // self.render(n, Attribute::Bold, Attribute::NormalIntensity);
+                self.text.push_str(&termion::style::Bold.to_string());
                 self.parse_children(n);
+                self.text.push_str(&termion::style::Reset.to_string());
                 self.text.push('\n');
             }
             "blockquote" | "div" | "p" | "tr" => {
@@ -306,31 +308,20 @@ impl Epub {
         Ok(())
     }
 
-    pub fn read_chapter(&mut self, index: usize) -> Result<()> {
-        // let mut chapter = &mut self.chapters[index];
-        let relative_path = self.chapters[index].relative_path.clone();
+    pub fn read_chapter(&mut self, index: usize) -> Result<&String> {
+        if self.chapters[index].is_parsed {
+            return Ok(&self.chapters[index].text);
+        }
 
+        let relative_path = self.chapters[index].relative_path.clone();
         let xml = self.get_raw_text(&format!("{}{}", &self.root_dir, relative_path))?;
+
         let doc = Document::parse(&xml)?;
         let body = doc.root_element().last_element_child().unwrap();
 
         self.chapters[index].parse(body);
+        self.chapters[index].is_parsed = true;
 
-        // if chapter.text.trim().is_empty() {
-        //     return Ok(());
-        // }
-        // let relative = path.rsplit('/').next().unwrap();
-        // self.links
-        //     .insert(relative.to_string(), (self.chapters.len(), 0));
-        // for (id, pos) in c.frag.drain(..) {
-        //     let url = format!("{}#{}", relative, id);
-        //     self.links.insert(url, (self.chapters.len(), pos));
-        // }
-        // for link in c.links.iter_mut() {
-        //     if link.2.starts_with('#') {
-        //         link.2.insert_str(0, relative);
-        //     }
-        // }
-        Ok(())
+        Ok(&self.chapters[index].text)
     }
 }

@@ -2,7 +2,8 @@
     "cSpell.words": [
         "argh",
         "epub",
-        "rootfile"
+        "rootfile",
+        "termion"
     ],
     "editor.semanticTokenColorCustomizations": {
         "enabled": true,

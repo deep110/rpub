@@ -17,6 +17,7 @@ License: ISC.
 #![warn(missing_docs)]
 #![warn(missing_copy_implementations)]
 #![warn(missing_debug_implementations)]
+#![allow(dead_code)]
 
 extern crate alloc;
 
@@ -507,14 +508,6 @@ impl<'a, 'input> Attribute<'a, 'input> {
     /// ```
     #[inline]
     pub fn value(&self) -> &'a str {
-        &self.data.value
-    }
-
-    /// Returns attribute's value storage.
-    ///
-    /// Useful when you need a more low-level access to an allocated string.
-    #[inline]
-    pub fn value_storage(&self) -> &StringStorage<'input> {
         &self.data.value
     }
 
@@ -1064,64 +1057,10 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         }
     }
 
-    /// Returns element's tail text.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let doc = roxmltree::Document::parse("\
-    /// <root>
-    ///     text1
-    ///     <p/>
-    ///     text2
-    /// </root>
-    /// ").unwrap();
-    ///
-    /// let p = doc.descendants().find(|n| n.has_tag_name("p")).unwrap();
-    /// assert_eq!(p.tail(), Some("\n    text2\n"));
-    /// ```
-    #[inline]
-    pub fn tail(&self) -> Option<&'a str> {
-        self.tail_storage().map(|s| s.as_str())
-    }
-
-    /// Returns element's tail text storage.
-    ///
-    /// Useful when you need a more low-level access to an allocated string.
-    pub fn tail_storage(&self) -> Option<&'a StringStorage<'input>> {
-        if !self.is_element() {
-            return None;
-        }
-
-        match self.next_sibling().map(|n| n.id) {
-            Some(id) => match self.doc.nodes[id.get_usize()].kind {
-                NodeKind::Text(ref text) => Some(text),
-                _ => None,
-            },
-            None => None,
-        }
-    }
-
-    /// Returns the parent of this node.
-    #[inline]
-    pub fn parent(&self) -> Option<Self> {
-        self.d.parent.map(|id| self.doc.get_node(id).unwrap())
-    }
-
-    /// Returns the parent element of this node.
-    pub fn parent_element(&self) -> Option<Self> {
-        self.ancestors().skip(1).find(|n| n.is_element())
-    }
-
     /// Returns the previous sibling of this node.
     #[inline]
     pub fn prev_sibling(&self) -> Option<Self> {
         self.d.prev_sibling.map(|id| self.doc.get_node(id).unwrap())
-    }
-
-    /// Returns the previous sibling element of this node.
-    pub fn prev_sibling_element(&self) -> Option<Self> {
-        self.prev_siblings().skip(1).find(|n| n.is_element())
     }
 
     /// Returns the next sibling of this node.
@@ -1141,11 +1080,6 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
                     None
                 }
             })
-    }
-
-    /// Returns the next sibling element of this node.
-    pub fn next_sibling_element(&self) -> Option<Self> {
-        self.next_siblings().skip(1).find(|n| n.is_element())
     }
 
     /// Returns the first child of this node.
@@ -1172,61 +1106,10 @@ impl<'a, 'input: 'a> Node<'a, 'input> {
         self.children().filter(|n| n.is_element()).last()
     }
 
-    /// Returns true if this node has siblings.
-    #[inline]
-    pub fn has_siblings(&self) -> bool {
-        self.d.prev_sibling.is_some() || self.next_sibling().is_some()
-    }
-
     /// Returns true if this node has children.
     #[inline]
     pub fn has_children(&self) -> bool {
         self.d.last_child.is_some()
-    }
-
-    /// Returns an iterator over ancestor nodes starting at this node.
-    #[inline]
-    pub fn ancestors(&self) -> AxisIter<'a, 'input> {
-        AxisIter {
-            node: Some(*self),
-            next: Node::parent,
-        }
-    }
-
-    /// Returns an iterator over previous sibling nodes starting at this node.
-    #[inline]
-    pub fn prev_siblings(&self) -> AxisIter<'a, 'input> {
-        AxisIter {
-            node: Some(*self),
-            next: Node::prev_sibling,
-        }
-    }
-
-    /// Returns an iterator over next sibling nodes starting at this node.
-    #[inline]
-    pub fn next_siblings(&self) -> AxisIter<'a, 'input> {
-        AxisIter {
-            node: Some(*self),
-            next: Node::next_sibling,
-        }
-    }
-
-    /// Returns an iterator over first children nodes starting at this node.
-    #[inline]
-    pub fn first_children(&self) -> AxisIter<'a, 'input> {
-        AxisIter {
-            node: Some(*self),
-            next: Node::first_child,
-        }
-    }
-
-    /// Returns an iterator over last children nodes starting at this node.
-    #[inline]
-    pub fn last_children(&self) -> AxisIter<'a, 'input> {
-        AxisIter {
-            node: Some(*self),
-            next: Node::last_child,
-        }
     }
 
     /// Returns an iterator over children nodes.
